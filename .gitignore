@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Old output directory (if it exists)
+output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Note: evm-chain-contracts directory is outside this project
+# and will not be tracked by git

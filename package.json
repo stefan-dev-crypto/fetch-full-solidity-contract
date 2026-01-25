@@ -1,0 +1,28 @@
+{
+  "name": "fetch-solidity-contract",
+  "version": "1.0.0",
+  "description": "Fetch and analyze Solidity contracts from EVM chains",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:proxy": "node src/tests/test-proxy-detection.js",
+    "test:fetch": "node src/tests/test-fetch-source.js",
+    "test:parse": "node src/tests/test-parse-source.js",
+    "test:decompile": "node src/tests/test-decompile.js",
+    "test:all": "node src/tests/test-all.js",
+    "fetch": "node src/index.js"
+  },
+  "keywords": [
+    "solidity",
+    "ethereum",
+    "smart-contract",
+    "decompiler",
+    "etherscan"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.9.0"
+  }
+}
