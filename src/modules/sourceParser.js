@@ -11,6 +11,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // Output directory is outside the project for use by other projects
 const OUTPUT_DIR = path.join(__dirname, '..', '..', '..', 'evm-chain-contracts');
+// Path to blacklist configuration file
+const BLACKLIST_CONFIG_PATH = path.join(__dirname, '..', 'config', 'contract-blacklist.json');
 
 // ============================================================================
 // AUDIT EXCLUSION PATTERNS - Production-Grade Security Audit Configuration
@@ -142,6 +144,50 @@ const RED_FLAG_PATHS = [
   /^vendor\//i,                 // Root-level vendor folder
   /^external\//i,               // Root-level external folder
 ];
+
+/**
+ * Load contract file blacklist from JSON configuration file
+ * @returns {string[]} Array of blacklist patterns
+ */
+function loadBlacklist() {
+  try {
+    if (fs.existsSync(BLACKLIST_CONFIG_PATH)) {
+      const blacklistData = JSON.parse(fs.readFileSync(BLACKLIST_CONFIG_PATH, 'utf8'));
+      return blacklistData.contractFileNames || [];
+    }
+  } catch (error) {
+    console.warn(`Warning: Could not load blacklist from ${BLACKLIST_CONFIG_PATH}: ${error.message}`);
+  }
+  return [];
+}
+
+/**
+ * Check if a file path matches the contract file blacklist
+ * @param {string} filePath - Path to the file
+ * @returns {boolean} True if file matches blacklist and should not be saved
+ */
+export function isBlacklisted(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  
+  const blacklist = loadBlacklist();
+  if (blacklist.length === 0) {
+    return false;
+  }
+  
+  // Normalize path for comparison (use forward slashes)
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  
+  // Check if file path contains any blacklist pattern
+  for (const pattern of blacklist) {
+    if (normalizedPath.includes(pattern)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
 
 /**
  * Parse Etherscan source code response
@@ -281,13 +327,104 @@ export function shouldExcludeFromAudit(filePath) {
 // }
 
 /**
+ * Strip all comments from Solidity source code
+ * Handles single-line, multi-line, and NatSpec comments
+ * Preserves strings and doesn't strip comment-like syntax inside string literals
+ * @param {string} source - Solidity source code
+ * @returns {string} Source code without comments
+ */
+function stripSolidityComments(source) {
+  let result = '';
+  let i = 0;
+  const len = source.length;
+  
+  while (i < len) {
+    const char = source[i];
+    const nextChar = i + 1 < len ? source[i + 1] : '';
+    
+    // Handle string literals (single quotes)
+    if (char === "'" && (i === 0 || source[i - 1] !== '\\')) {
+      result += char;
+      i++;
+      // Copy everything until the closing quote
+      while (i < len) {
+        result += source[i];
+        if (source[i] === "'" && source[i - 1] !== '\\') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    
+    // Handle string literals (double quotes)
+    if (char === '"' && (i === 0 || source[i - 1] !== '\\')) {
+      result += char;
+      i++;
+      // Copy everything until the closing quote
+      while (i < len) {
+        result += source[i];
+        if (source[i] === '"' && source[i - 1] !== '\\') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    
+    // Handle multi-line comments /* */ and /** */
+    if (char === '/' && nextChar === '*') {
+      i += 2;
+      // Skip until we find */
+      while (i < len - 1) {
+        if (source[i] === '*' && source[i + 1] === '/') {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    
+    // Handle single-line comments // and ///
+    if (char === '/' && nextChar === '/') {
+      // Skip until end of line
+      while (i < len && source[i] !== '\n') {
+        i++;
+      }
+      // Keep the newline
+      if (i < len && source[i] === '\n') {
+        result += '\n';
+        i++;
+      }
+      continue;
+    }
+    
+    // Regular character
+    result += char;
+    i++;
+  }
+  
+  // Clean up excessive blank lines (more than 2 consecutive newlines)
+  result = result.replace(/\n{3,}/g, '\n\n');
+  
+  // Trim trailing whitespace on each line
+  result = result.split('\n').map(line => line.trimEnd()).join('\n');
+  
+  // Trim leading/trailing whitespace from the entire file
+  return result.trim() + '\n';
+}
+
+/**
  * Analyze file to determine if it's a pure interface
  * @param {string} content - File content
  * @returns {boolean} True if it's a pure interface
  */
 function isPureInterface(content) {
   // Remove comments
-  const withoutComments = content.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const withoutComments = stripSolidityComments(content);
   
   // Check if it contains "interface" keyword
   if (!/\binterface\s+\w+/.test(withoutComments)) {
@@ -555,7 +692,7 @@ function cleanupEmptyDirectories(directory) {
  * @param {string} contractFileName - Main contract file name from Etherscan
  * @returns {Object} Information about saved files
  */
-export function saveSourceFiles(chainName, contractAddress, parsedSource, contractName, contractType = 'main', contractFileName = null) {
+export function saveSourceFiles(chainName, contractAddress, parsedSource, contractName, contractType = '', contractFileName = null) {
   const baseDir = createOutputDirectory(chainName, contractAddress);
   
   if (!fs.existsSync(baseDir)) {
@@ -578,12 +715,21 @@ export function saveSourceFiles(chainName, contractAddress, parsedSource, contra
   const excludedFiles = [];
   const excludedReasons = {};
   const keptFiles = [];
+  const blacklistedFiles = [];
   
   for (const [filePath, content] of Object.entries(parsedSource.files)) {
     // Normalize file path - remove leading slashes
     let normalizedPath = filePath;
     if (normalizedPath.startsWith('/')) {
       normalizedPath = normalizedPath.slice(1);
+    }
+    
+    // Check if file is blacklisted - if so, skip saving entirely
+    if (isBlacklisted(normalizedPath)) {
+      blacklistedFiles.push(normalizedPath);
+      excludedFiles.push(normalizedPath);
+      excludedReasons[normalizedPath] = 'blacklisted-vendor-library';
+      continue; // Skip this file - don't save it
     }
     
     // Check if file should be excluded from audit
@@ -603,8 +749,14 @@ export function saveSourceFiles(chainName, contractAddress, parsedSource, contra
       fs.mkdirSync(fileDir, { recursive: true });
     }
     
+    // Strip all comments from Solidity files before saving
+    let processedContent = content;
+    if (normalizedPath.endsWith('.sol')) {
+      processedContent = stripSolidityComments(content);
+    }
+    
     // Write file
-    fs.writeFileSync(fullPath, content, 'utf8');
+    fs.writeFileSync(fullPath, processedContent, 'utf8');
     savedFiles.push(fullPath);
     
     // Track exclusion status
@@ -653,6 +805,10 @@ export function saveSourceFiles(chainName, contractAddress, parsedSource, contra
     cleanupEmptyDirectories(baseDir);
   }
   
+  if (blacklistedFiles.length > 0) {
+    console.log(`   🚫 Skipped ${blacklistedFiles.length} blacklisted vendor library file(s)`);
+  }
+  
   if (deletedFiles.length > 0) {
     console.log(`   🗑️  Deleted ${deletedFiles.length} excluded file(s)`);
   }
@@ -678,6 +834,7 @@ export function saveSourceFiles(chainName, contractAddress, parsedSource, contra
     outputDir: baseDir,
     savedFiles,
     deletedFiles,
+    blacklistedFiles,
     keptFiles,
     excludedReasons,
     auditManifest

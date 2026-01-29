@@ -13,28 +13,24 @@ export const CHAIN_CONFIG = {
     chainId: 1,
     rpcUrl: 'https://ethereum.publicnode.com',
     symbol: 'ETH',
-    explorer: 'https://etherscan.io'
   },
   bsc: {
     name: 'BNB Smart Chain',
     chainId: 56,
     rpcUrl: 'https://bsc.blockrazor.xyz',
     symbol: 'BNB',
-    explorer: 'https://bscscan.com'
   },
   base: {
     name: 'Base',
     chainId: 8453,
     rpcUrl: 'https://base-rpc.publicnode.com',
     symbol: 'ETH',
-    explorer: 'https://basescan.org'
   },
   arbitrum: {
     name: 'Arbitrum One',
     chainId: 42161,
-    rpcUrl: 'https://arbitrum.publicnode.com',
+    rpcUrl: 'https://arb1.arbitrum.io/rpc',
     symbol: 'ETH',
-    explorer: 'https://arbiscan.io'
   }
 };
 
